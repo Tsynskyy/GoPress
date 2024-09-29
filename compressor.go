@@ -65,9 +65,41 @@ func main() {
 	flag.Parse()
 
 	if compress == decompress || inputPath == "" || outputPath == "" {
-		fmt.Println("Использование:")
-		fmt.Println("  Сжатие: -c -i input_file -o output_file [-n num_tasks] [-bs block_size]")
-		fmt.Println("  Распаковка: -d -i input_file -o output_file [-n num_tasks] [-offset N] [-size M]")
+		fmt.Println("Некорректные параметры.")
+		flag.Usage()
+		os.Exit(1)
+	}
+
+	if numTasks < 1 {
+		fmt.Println("Ошибка: параметр -n (число параллельных задач) должен быть >= 1")
+		os.Exit(1)
+	}
+
+	if compress && blockSize <= 0 {
+		fmt.Println("Ошибка: параметр -bs (размер блока) должен быть > 0")
+		os.Exit(1)
+	}
+
+	if decompress && offset < 0 {
+		fmt.Println("Ошибка: параметр -offset должен быть >= 0")
+		os.Exit(1)
+	}
+
+	if decompress && size < -1 {
+		fmt.Println("Ошибка: параметр -size должен быть >= -1 (или -1 для распаковки до конца файла)")
+		os.Exit(1)
+	}
+
+	if inputPath == outputPath {
+		fmt.Println("Ошибка: исходный и выходной файлы не должны совпадать")
+		os.Exit(1)
+	}
+
+	if _, err := os.Stat(inputPath); os.IsNotExist(err) {
+		fmt.Printf("Ошибка: файл %s не существует\n", inputPath)
+		os.Exit(1)
+	} else if err != nil {
+		fmt.Printf("Ошибка при доступе к файлу %s: %v\n", inputPath, err)
 		os.Exit(1)
 	}
 
@@ -107,7 +139,7 @@ func compressFile(inputPath, outputPath string, numWorkers int, blockSize int64)
 		return err
 	}
 
-	currentOffset := int64(12)
+	currentOffset := int64(12) // 4 байта сигнатура + 8 байт размер заголовка
 
 	taskChan := make(chan CompressTask, numWorkers)
 	resultChan := make(chan CompressResult, numWorkers)
@@ -121,11 +153,13 @@ func compressFile(inputPath, outputPath string, numWorkers int, blockSize int64)
 				var buf bytes.Buffer
 				writer := gzip.NewWriter(&buf)
 				_, err := writer.Write(task.Data)
-				writer.Close()
+
+				err = writer.Close()
 				if err != nil {
 					log.Println("Ошибка при сжатии:", err)
 					continue
 				}
+
 				resultChan <- CompressResult{
 					Index:        task.Index,
 					Data:         buf.Bytes(),
@@ -139,8 +173,9 @@ func compressFile(inputPath, outputPath string, numWorkers int, blockSize int64)
 		index := 0
 		for {
 			buf := make([]byte, blockSize)
-			n, err := io.ReadFull(inputFile, buf)
-			if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
+
+			n, err := inputFile.Read(buf)
+			if err != nil && err != io.EOF {
 				log.Println("Ошибка при чтении файла:", err)
 				break
 			}
@@ -152,9 +187,10 @@ func compressFile(inputPath, outputPath string, numWorkers int, blockSize int64)
 				Data:  buf[:n],
 			}
 			index++
-			if err == io.EOF || err == io.ErrUnexpectedEOF {
+			if err == io.EOF {
 				break
 			}
+
 		}
 		close(taskChan)
 	}()
@@ -170,7 +206,6 @@ func compressFile(inputPath, outputPath string, numWorkers int, blockSize int64)
 
 	for result := range resultChan {
 		resultsMap[result.Index] = result
-
 		for {
 			res, ok := resultsMap[expectedIndex]
 			if !ok {
@@ -223,7 +258,6 @@ func compressFile(inputPath, outputPath string, numWorkers int, blockSize int64)
 
 func serializeHeader(header Header) ([]byte, error) {
 	var buf bytes.Buffer
-
 	err := binary.Write(&buf, binary.LittleEndian, header.BlockSize)
 	if err != nil {
 		return nil, err
@@ -323,25 +357,55 @@ func readHeader(file *os.File) (Header, error) {
 func decompressFile(inputPath, outputPath string, numWorkers int, offset, size int64) error {
 	inputFile, err := os.Open(inputPath)
 	if err != nil {
-		return err
+		return fmt.Errorf("не удалось открыть входной файл: %v", err)
 	}
-	defer inputFile.Close()
+	defer func() {
+		if err := inputFile.Close(); err != nil {
+			log.Println("Ошибка при закрытии входного файла:", err)
+		}
+	}()
 
 	outputFile, err := os.Create(outputPath)
 	if err != nil {
-		return err
+		return fmt.Errorf("не удалось создать выходной файл: %v", err)
 	}
-	defer outputFile.Close()
+	defer func() {
+		if err := outputFile.Close(); err != nil {
+			log.Println("Ошибка при закрытии выходного файла:", err)
+		}
+	}()
 
 	header, err := readHeader(inputFile)
 	if err != nil {
-		return err
+		return fmt.Errorf("не удалось прочитать заголовок: %v", err)
+	}
+
+	var totalOriginalSize int64
+	for _, block := range header.Blocks {
+		totalOriginalSize += block.OriginalSize
+	}
+
+	if offset > totalOriginalSize {
+		return fmt.Errorf("параметр -offset выходит за пределы данных")
+	}
+
+	if size > 0 && offset+size > totalOriginalSize {
+		fmt.Println("Предупреждение: параметр -size выходит за пределы данных, будет распаковано до конца файла")
+		size = -1
 	}
 
 	startBlock, endBlock, startOffsetInBlock, endOffsetInBlock := calculateBlocks(header, offset, size)
 
+	if startBlock < 0 || startBlock >= len(header.Blocks) {
+		return fmt.Errorf("вычисленный startBlock некорректен")
+	}
+	if endBlock < 0 || endBlock >= len(header.Blocks) {
+		return fmt.Errorf("вычисленный endBlock некорректен")
+	}
+
 	taskChan := make(chan int, numWorkers)
 	resultChan := make(chan DecompressResult, numWorkers)
+	errChan := make(chan error, numWorkers)
 	var wg sync.WaitGroup
 
 	for i := 0; i < numWorkers; i++ {
@@ -350,25 +414,25 @@ func decompressFile(inputPath, outputPath string, numWorkers int, offset, size i
 			defer wg.Done()
 			for index := range taskChan {
 				block := header.Blocks[index]
-
 				compressedData := make([]byte, block.CompressedSize)
 				_, err := inputFile.ReadAt(compressedData, block.Offset)
 				if err != nil {
-					log.Println("Ошибка при чтении блока:", err)
-					continue
+					errChan <- fmt.Errorf("Ошибка при чтении блока %d: %v", index, err)
+					return
 				}
 
 				reader, err := gzip.NewReader(bytes.NewReader(compressedData))
 				if err != nil {
-					log.Println("Ошибка при распаковке:", err)
-					continue
+					errChan <- fmt.Errorf("Ошибка при распаковке блока %d: %v", index, err)
+					return
 				}
 				decompressedData, err := io.ReadAll(reader)
-				reader.Close()
+				err = reader.Close()
 				if err != nil {
-					log.Println("Ошибка при чтении распакованных данных:", err)
-					continue
+					errChan <- fmt.Errorf("Ошибка при закрытии reader для блока %d: %v", index, err)
+					return
 				}
+
 				resultChan <- DecompressResult{
 					Index: index,
 					Data:  decompressedData,
@@ -387,54 +451,80 @@ func decompressFile(inputPath, outputPath string, numWorkers int, offset, size i
 	go func() {
 		wg.Wait()
 		close(resultChan)
+		close(errChan)
 	}()
 
 	resultsMap := make(map[int][]byte)
 	expectedIndex := startBlock
 	totalWritten := int64(0)
-	for result := range resultChan {
-		resultsMap[result.Index] = result.Data
 
-		for {
-			data, ok := resultsMap[expectedIndex]
+	for {
+		select {
+		case result, ok := <-resultChan:
 			if !ok {
-				break
-			}
+				resultChan = nil
+			} else {
+				resultsMap[result.Index] = result.Data
+				for {
+					data, ok := resultsMap[expectedIndex]
+					if !ok {
+						break
+					}
 
-			if expectedIndex == startBlock {
-				data = data[startOffsetInBlock:]
-			}
-			if expectedIndex == endBlock && size >= 0 {
-				end := int64(len(data))
-				if endOffsetInBlock < end {
-					data = data[:endOffsetInBlock]
+					if expectedIndex == startBlock && expectedIndex == endBlock {
+						data = data[startOffsetInBlock:endOffsetInBlock]
+					} else if expectedIndex == startBlock {
+						data = data[startOffsetInBlock:]
+					} else if expectedIndex == endBlock {
+						data = data[:endOffsetInBlock]
+					}
+
+					n, err := outputFile.Write(data)
+					if err != nil {
+						return fmt.Errorf("Ошибка при записи данных: %v", err)
+					}
+					totalWritten += int64(n)
+					delete(resultsMap, expectedIndex)
+					expectedIndex++
 				}
 			}
-			n, err := outputFile.Write(data)
-			if err != nil {
+
+		case err, ok := <-errChan:
+			if !ok {
+				errChan = nil
+			} else {
 				return err
 			}
-			totalWritten += int64(n)
-			delete(resultsMap, expectedIndex)
-			expectedIndex++
+		}
+
+		if resultChan == nil && errChan == nil {
+			break
 		}
 	}
 
+	fmt.Println("Распаковка завершена успешно.")
 	return nil
 }
 
 func calculateBlocks(header Header, offset, size int64) (startBlock int, endBlock int, startOffsetInBlock int64, endOffsetInBlock int64) {
 	blockSize := header.BlockSize
 	startBlock = int(offset / blockSize)
-	endByte := offset + size - 1
-	if size < 0 {
-		endByte = header.BlockCount*blockSize - 1
-	}
-	endBlock = int(endByte / blockSize)
-	if endBlock >= int(header.BlockCount) {
-		endBlock = int(header.BlockCount) - 1
-	}
 	startOffsetInBlock = offset % blockSize
-	endOffsetInBlock = (endByte % blockSize) + 1
+
+	var totalOriginalSize int64
+	for _, block := range header.Blocks {
+		totalOriginalSize += block.OriginalSize
+	}
+
+	var endOffset int64
+	if size < 0 || offset+size > totalOriginalSize {
+		endOffset = totalOriginalSize
+	} else {
+		endOffset = offset + size
+	}
+
+	endBlock = int((endOffset - 1) / blockSize)
+	endOffsetInBlock = (endOffset-1)%blockSize + 1
+
 	return
 }
