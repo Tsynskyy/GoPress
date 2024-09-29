@@ -13,10 +13,19 @@ import (
 	"sync"
 )
 
+const DefaultBlockSize int64 = 1 << 20
+
 type BlockInfo struct {
 	Offset         int64
 	CompressedSize int64
 	OriginalSize   int64
+}
+
+type BlockRange struct {
+	StartBlock         int
+	EndBlock           int
+	StartOffsetInBlock int64
+	EndOffsetInBlock   int64
 }
 
 type Header struct {
@@ -61,11 +70,23 @@ func main() {
 	flag.IntVar(&numTasks, "n", runtime.GOMAXPROCS(0), "Число параллельных задач")
 	flag.Int64Var(&offset, "offset", 0, "Начальный offset для распаковки")
 	flag.Int64Var(&size, "size", -1, "Количество байт для распаковки")
-	flag.Int64Var(&blockSize, "bs", 1<<20, "Размер блока в байтах (по умолчанию 1MB)")
+	flag.Int64Var(&blockSize, "bs", DefaultBlockSize, "Размер блока в байтах (по умолчанию 1MB)")
 	flag.Parse()
 
-	if compress == decompress || inputPath == "" || outputPath == "" {
-		fmt.Println("Некорректные параметры.")
+	if compress == decompress {
+		fmt.Println("Ошибка: необходимо выбрать либо сжатие (-c), либо распаковку (-d), но не оба сразу.")
+		flag.Usage()
+		os.Exit(1)
+	}
+
+	if inputPath == "" {
+		fmt.Println("Ошибка: не указан путь к исходному файлу (-i).")
+		flag.Usage()
+		os.Exit(1)
+	}
+
+	if outputPath == "" {
+		fmt.Println("Ошибка: не указан путь к выходному файлу (-o).")
 		flag.Usage()
 		os.Exit(1)
 	}
@@ -122,6 +143,11 @@ func compressFile(inputPath, outputPath string, numWorkers int, blockSize int64)
 		return err
 	}
 	defer inputFile.Close()
+
+	inputFileSize, err := getFileSize(inputPath)
+	if err != nil {
+		return fmt.Errorf("не удалось получить размер входного файла: %v", err)
+	}
 
 	outputFile, err := os.Create(outputPath)
 	if err != nil {
@@ -253,6 +279,15 @@ func compressFile(inputPath, outputPath string, numWorkers int, blockSize int64)
 		return err
 	}
 
+	outputFileSize, err := getFileSize(outputPath)
+	if err != nil {
+		return fmt.Errorf("не удалось получить размер выходного файла: %v", err)
+	}
+
+	fmt.Println("Сжатие завершено успешно.")
+	fmt.Printf("Размер файла до сжатия: %d байт\n", inputFileSize)
+	fmt.Printf("Размер файла после сжатия: %d байт\n", outputFileSize)
+
 	return nil
 }
 
@@ -365,6 +400,11 @@ func decompressFile(inputPath, outputPath string, numWorkers int, offset, size i
 		}
 	}()
 
+	inputFileSize, err := getFileSize(inputPath)
+	if err != nil {
+		return fmt.Errorf("не удалось получить размер входного файла: %v", err)
+	}
+
 	outputFile, err := os.Create(outputPath)
 	if err != nil {
 		return fmt.Errorf("не удалось создать выходной файл: %v", err)
@@ -394,12 +434,12 @@ func decompressFile(inputPath, outputPath string, numWorkers int, offset, size i
 		size = -1
 	}
 
-	startBlock, endBlock, startOffsetInBlock, endOffsetInBlock := calculateBlocks(header, offset, size)
+	blockRange := calculateBlocks(header, offset, size)
 
-	if startBlock < 0 || startBlock >= len(header.Blocks) {
+	if blockRange.StartBlock < 0 || blockRange.StartBlock >= len(header.Blocks) {
 		return fmt.Errorf("вычисленный startBlock некорректен")
 	}
-	if endBlock < 0 || endBlock >= len(header.Blocks) {
+	if blockRange.EndBlock < 0 || blockRange.EndBlock >= len(header.Blocks) {
 		return fmt.Errorf("вычисленный endBlock некорректен")
 	}
 
@@ -427,9 +467,12 @@ func decompressFile(inputPath, outputPath string, numWorkers int, offset, size i
 					return
 				}
 				decompressedData, err := io.ReadAll(reader)
-				err = reader.Close()
-				if err != nil {
-					errChan <- fmt.Errorf("Ошибка при закрытии reader для блока %d: %v", index, err)
+				errClose := reader.Close()
+				if err != nil || errClose != nil {
+					if err == nil {
+						err = errClose
+					}
+					errChan <- fmt.Errorf("Ошибка при чтении распакованных данных блока %d: %v", index, err)
 					return
 				}
 
@@ -442,7 +485,7 @@ func decompressFile(inputPath, outputPath string, numWorkers int, offset, size i
 	}
 
 	go func() {
-		for i := startBlock; i <= endBlock; i++ {
+		for i := blockRange.StartBlock; i <= blockRange.EndBlock; i++ {
 			taskChan <- i
 		}
 		close(taskChan)
@@ -455,7 +498,7 @@ func decompressFile(inputPath, outputPath string, numWorkers int, offset, size i
 	}()
 
 	resultsMap := make(map[int][]byte)
-	expectedIndex := startBlock
+	expectedIndex := blockRange.StartBlock
 	totalWritten := int64(0)
 
 	for {
@@ -471,12 +514,12 @@ func decompressFile(inputPath, outputPath string, numWorkers int, offset, size i
 						break
 					}
 
-					if expectedIndex == startBlock && expectedIndex == endBlock {
-						data = data[startOffsetInBlock:endOffsetInBlock]
-					} else if expectedIndex == startBlock {
-						data = data[startOffsetInBlock:]
-					} else if expectedIndex == endBlock {
-						data = data[:endOffsetInBlock]
+					if expectedIndex == blockRange.StartBlock && expectedIndex == blockRange.EndBlock {
+						data = data[blockRange.StartOffsetInBlock:blockRange.EndOffsetInBlock]
+					} else if expectedIndex == blockRange.StartBlock {
+						data = data[blockRange.StartOffsetInBlock:]
+					} else if expectedIndex == blockRange.EndBlock {
+						data = data[:blockRange.EndOffsetInBlock]
 					}
 
 					n, err := outputFile.Write(data)
@@ -502,14 +545,23 @@ func decompressFile(inputPath, outputPath string, numWorkers int, offset, size i
 		}
 	}
 
+	outputFileSize, err := getFileSize(outputPath)
+	if err != nil {
+		return fmt.Errorf("не удалось получить размер выходного файла: %v", err)
+	}
+
 	fmt.Println("Распаковка завершена успешно.")
+	fmt.Printf("Размер файла до распаковки: %d байт\n", inputFileSize)
+	fmt.Printf("Размер файла после распаковки: %d байт\n", outputFileSize)
+
 	return nil
 }
 
-func calculateBlocks(header Header, offset, size int64) (startBlock int, endBlock int, startOffsetInBlock int64, endOffsetInBlock int64) {
+func calculateBlocks(header Header, offset, size int64) BlockRange {
+	var br BlockRange
 	blockSize := header.BlockSize
-	startBlock = int(offset / blockSize)
-	startOffsetInBlock = offset % blockSize
+	br.StartBlock = int(offset / blockSize)
+	br.StartOffsetInBlock = offset % blockSize
 
 	var totalOriginalSize int64
 	for _, block := range header.Blocks {
@@ -523,8 +575,16 @@ func calculateBlocks(header Header, offset, size int64) (startBlock int, endBloc
 		endOffset = offset + size
 	}
 
-	endBlock = int((endOffset - 1) / blockSize)
-	endOffsetInBlock = (endOffset-1)%blockSize + 1
+	br.EndBlock = int((endOffset - 1) / blockSize)
+	br.EndOffsetInBlock = (endOffset-1)%blockSize + 1
 
-	return
+	return br
+}
+
+func getFileSize(path string) (int64, error) {
+	fileInfo, err := os.Stat(path)
+	if err != nil {
+		return 0, err
+	}
+	return fileInfo.Size(), nil
 }
