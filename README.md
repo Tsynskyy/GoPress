@@ -122,10 +122,10 @@ Decompression:
 
 ### Parameter Descriptions
 
-| Parameter    | Description                                                                     | Default Value                                      |
-| ------------ | ------------------------------------------------------------------------------- | -------------------------------------------------- |
-| `-c`         | File compression mode.                                                          | `false`                                            |
-| `-d`         | File decompression mode.                                                        | `false`                                            |
+| Parameter    | Description                                                                      | Default Value                                      |
+| ------------ | -------------------------------------------------------------------------------- | -------------------------------------------------- |
+| `-c`         | File compression mode.                                                           | `false`                                            |
+| `-d`         | File decompression mode.                                                         | `false`                                            |
 | `-i`         | Path to the input file *(required)*.                                             | `""`                                               |
 | `-o`         | Path to the output file *(required)*.                                            | `""`                                               |
 | `-n`         | Number of parallel tasks (threads) *(optional)*.                                 | `GOMAXPROCS` (Number of logical CPU cores)         |
