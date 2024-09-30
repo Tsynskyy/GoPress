@@ -34,14 +34,14 @@
 | `-offset`    | Смещение в байтах от начала файла, с которого начинается распаковка.            | `0`                                                |
 | `-size`      | Количество байт для распаковки *(необязательно)*.                               | `-1` (до конца файла)                              |
 
-### Примеры использования
+### Примеры использования (Linux / macOS (Bash))
 
 #### Сжатие файла
 
 Для сжатия файла `source.txt` и сохранения результата в `compressed.dat` используя 4 параллельные задачи и размер блока 2 МБ:
 
 ```
-go run compressor.go -c -i source.txt -o compressed.dat -n 4 -bs 2097152
+./compressor -c -i source.txt -o compressed.dat -n 4 -bs 2097152
 ```
 
 #### Распаковка всего файла
@@ -49,7 +49,7 @@ go run compressor.go -c -i source.txt -o compressed.dat -n 4 -bs 2097152
 Для распаковки файла `compressed.dat` и сохранения результата в `restored.txt`:
 
 ```
-go run compressor.go -d -i compressed.dat -o restored.txt
+./compressor -d -i compressed.dat -o restored.txt
 ```
 
 #### Частичная распаковка
@@ -57,7 +57,7 @@ go run compressor.go -d -i compressed.dat -o restored.txt
 Для распаковки 1000 байт из `compressed.dat`, начиная со смещения 5000 байт, и сохранения результата в `restored_part.txt`:
 
 ```
-go run compressor.go -d -i compressed.dat -o restored_part.txt -offset 5000 -size 1000
+./compressor -d -i compressed.dat -o restored_part.txt -offset 5000 -size 1000
 ```
 
 #### Распаковка с использованием 8 параллельных задач
@@ -65,52 +65,112 @@ go run compressor.go -d -i compressed.dat -o restored_part.txt -offset 5000 -siz
 Для распаковки файла `compressed.dat` с использованием 8 параллельных задач и сохранения результата в `restored.txt`:
 
 ```
-go run compressor.go -d -i compressed.dat -o restored.txt -n 8
+./compressor -d -i compressed.dat -o restored.txt -n 8
 ```
 
-## Требования
-
+## Сборка и запуск
+  
+### Требования
+  
 - Go версии 1.16 или выше.
-
-## Клонирование репозитория
-
+  
+### Клонирование репозитория
+  
 ```
 git clone https://github.com/Tsynskyy/GoPress.git
 cd GoPress
 ```
-
-## Сборка
-
-Скомпилировать программу в исполняемый файл:
-
+  
+### Для Linux / macOS (Bash)
+  
+Сборка программы в исполняемый файл:
+  
 ```
-go build -o compressor compressor.go
+go build -o compressor
 ```
-
-## Запуск
-
-После сборки запустить программу как исполняемый файл:
-
+  
+Запуск сжатия:
+  
 ```
 ./compressor -c -i source.txt -o compressed.dat
+```
+  
+Запуск распаковки:
+  
+```
+./compressor -d -i compressed.dat -o restored.txt
+```
+  
+### Для Windows (PowerShell)
+  
+Сборка программы в исполняемый файл:
+  
+```
+go build -o compressor.exe
+```
+  
+Запуск сжатия:
+  
+```
+.\compressor.exe -c -i source.txt -o compressed.dat
+```
+  
+Запуск распаковки:
+  
+```
+.\compressor.exe -d -i compressed.dat -o restored.txt
+```
+  
+### Для Windows (CMD)
+  
+Сборка программы в исполняемый файл:
+  
+```
+go build -o compressor.exe
+```
+  
+Запуск сжатия:
+
+```
+compressor.exe -c -i source.txt -o compressed.dat
+```
+  
+Запуск распаковки:
+  
+```
+compressor.exe -d -i compressed.dat -o restored.txt
+```
+
+### Запуск без предварительной сборки (Linux / macOS / Windows):
+
+Запуск сжатия:
+
+```
+go run main.go compress.go decompress.go utils.go -c -i source.txt -o compressed.dat
+```
+
+Запуск распаковки:
+
+```
+go run main.go compress.go decompress.go utils.go -d -i compressed.dat -o restored.txt
 ```
 
 ---
 
 # GoPress
 
-This utility is designed for compressing and decompressing files using the gzip algorithm. It supports multi-threaded processing, which significantly speeds up compression and decompression, especially for large files. It also allows partial decompression of files by using offset and size parameters.
+This utility is designed for compressing and decompressing files using the gzip algorithm. It supports multithreaded processing, which allows significantly speeding up compression and decompression processes, especially for large files. It also allows decompressing only specific parts of the file using the offset and size parameters.
 
 ## Features
 
-- **File compression** with options to specify block size and the number of parallel tasks.
+- **File compression** with the ability to specify block size and the number of parallel tasks.
 - **File decompression** with the ability to specify offset and size for partial decompression.
-- **Multi-threading** to boost performance through parallel block processing.
-- **Support for large files** by splitting them into blocks and handling them efficiently.
+- **Multithreading** to improve performance through parallel block processing.
+- **Support for large files** by splitting them into blocks and processing them efficiently.
 
 ## Usage
 
-### Command Line Syntax
+### Command line syntax
 
 ```
 Compression:
@@ -120,76 +180,136 @@ Decompression:
   -d -i input_file -o output_file [-n num_tasks] [-offset N] [-size M]
 ```
 
-### Parameter Descriptions
+### Parameter descriptions
 
-| Parameter    | Description                                                                      | Default Value                                      |
-| ------------ | -------------------------------------------------------------------------------- | -------------------------------------------------- |
-| `-c`         | File compression mode.                                                           | `false`                                            |
-| `-d`         | File decompression mode.                                                         | `false`                                            |
-| `-i`         | Path to the input file *(required)*.                                             | `""`                                               |
-| `-o`         | Path to the output file *(required)*.                                            | `""`                                               |
-| `-n`         | Number of parallel tasks (threads) *(optional)*.                                 | `GOMAXPROCS` (Number of logical CPU cores)         |
-| `-bs`        | Block size in bytes for compression *(optional)*.                                | `1MB` (1048576 bytes)                              |
-| `-offset`    | Offset in bytes from the start of the file where decompression begins.           | `0`                                                |
-| `-size`      | Number of bytes to decompress *(optional)*.                                      | `-1` (to the end of the file)                      |
+| Parameter     | Description                                                                       | Default Value                                      |
+| ------------- | --------------------------------------------------------------------------------- | -------------------------------------------------- |
+| `-c`          | Compression mode.                                                                 | `false`                                            |
+| `-d`          | Decompression mode.                                                               | `false`                                            |
+| `-i`          | Path to the input file *(required)*.                                              | `""`                                               |
+| `-o`          | Path to the output file *(required)*.                                             | `""`                                               |
+| `-n`          | Number of parallel tasks (threads) *(optional)*.                                  | `GOMAXPROCS` (Number of logical CPU cores)         |
+| `-bs`         | Block size in bytes for compression *(optional)*.                                 | `1MB` (1048576 bytes)                              |
+| `-offset`     | Offset in bytes from the start of the file where decompression begins.            | `0`                                                |
+| `-size`       | Number of bytes to decompress *(optional)*.                                       | `-1` (to the end of the file)                      |
 
-### Usage Examples
+### Usage examples (Linux / macOS (Bash))
 
-#### Compressing a File
+#### Compressing a file
 
 To compress the file `source.txt` and save the result as `compressed.dat` using 4 parallel tasks and a block size of 2 MB:
 
 ```
-go run compressor.go -c -i source.txt -o compressed.dat -n 4 -bs 2097152
+./compressor -c -i source.txt -o compressed.dat -n 4 -bs 2097152
 ```
 
-#### Decompressing the Entire File
+#### Decompressing the entire file
 
 To decompress the file `compressed.dat` and save the result as `restored.txt`:
 
 ```
-go run compressor.go -d -i compressed.dat -o restored.txt
+./compressor -d -i compressed.dat -o restored.txt
 ```
 
-#### Partial Decompression
+#### Partial decompression
 
 To decompress 1000 bytes from `compressed.dat` starting at the 5000-byte offset and save the result as `restored_part.txt`:
 
 ```
-go run compressor.go -d -i compressed.dat -o restored_part.txt -offset 5000 -size 1000
+./compressor -d -i compressed.dat -o restored_part.txt -offset 5000 -size 1000
 ```
 
-#### Decompression Using 8 Parallel Tasks
+#### Decompression using 8 parallel tasks
 
 To decompress the file `compressed.dat` using 8 parallel tasks and save the result as `restored.txt`:
 
 ```
-go run compressor.go -d -i compressed.dat -o restored.txt -n 8
+./compressor -d -i compressed.dat -o restored.txt -n 8
 ```
 
-## Requirements
-
-- Go version 1.16 or later.
-
-## Cloning the Repository
-
+## Building and running
+  
+### Requirements
+  
+- Go version 1.16 or higher.
+  
+### Cloning the repository
+  
 ```
 git clone https://github.com/Tsynskyy/GoPress.git
 cd GoPress
 ```
-
-## Building
-
-To build the program into an executable file:
-
+  
+### For Linux / macOS (Bash)
+  
+Build the program into an executable file:
+  
 ```
-go build -o compressor compressor.go
+go build -o compressor
 ```
-
-## Running
-
-After building, run the program as an executable:
-
+  
+Run compression:
+  
 ```
 ./compressor -c -i source.txt -o compressed.dat
+```
+  
+Run decompression:
+  
+```
+./compressor -d -i compressed.dat -o restored.txt
+```
+  
+### For Windows (PowerShell)
+  
+Build the program into an executable file:
+  
+```
+go build -o compressor.exe
+```
+  
+Run compression:
+  
+```
+.\compressor.exe -c -i source.txt -o compressed.dat
+```
+  
+Run decompression:
+  
+```
+.\compressor.exe -d -i compressed.dat -o restored.txt
+```
+  
+### For Windows (CMD)
+  
+Build the program into an executable file:
+  
+```
+go build -o compressor.exe
+```
+  
+Run compression:
+  
+```
+compressor.exe -c -i source.txt -o compressed.dat
+```
+  
+Run decompression:
+  
+```
+compressor.exe -d -i compressed.dat -o restored.txt
+```
+
+### Run without prior building (Linux / macOS / Windows):
+
+Run compression:
+
+```
+go run main.go compress.go decompress.go utils.go -c -i source.txt -o compressed.dat
+```
+
+Run decompression:
+
+```
+go run main.go compress.go decompress.go utils.go -d -i compressed.dat -o restored.txt
 ```
