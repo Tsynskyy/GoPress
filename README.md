@@ -72,6 +72,13 @@ go run compressor.go -d -i compressed.dat -o restored.txt -n 8
 
 - Go версии 1.16 или выше.
 
+## Клонирование репозитория
+
+```
+git clone https://github.com/Tsynskyy/GoPress.git
+cd GoPress
+```
+
 ## Сборка
 
 Скомпилировать программу в исполняемый файл:
@@ -163,6 +170,13 @@ go run compressor.go -d -i compressed.dat -o restored.txt -n 8
 ## Requirements
 
 - Go version 1.16 or later.
+
+## Cloning the Repository
+
+```
+git clone https://github.com/Tsynskyy/GoPress.git
+cd GoPress
+```
 
 ## Building
 
